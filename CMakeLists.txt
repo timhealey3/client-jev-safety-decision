@@ -3,4 +3,4 @@ project(tcp_client)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(tcp_client main.cpp)
+add_executable(tcp_client client/main.cpp)
