@@ -12,7 +12,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 
-#define PORT "8080"
+#define PORT "3490"
 #define BACKLOG 10
 
 void sigchld_handler(int s)
@@ -39,6 +39,7 @@ void *get_in_addr(struct sockaddr *sa)
 }
 
 int main() {
+    std::cout << "Starting up the server" << std::endl;
     // socked file descriptor
     int sockfd, newfd;
     struct addrinfo hints, *servinfo, *dummy;
@@ -76,13 +77,12 @@ int main() {
         }
         break;
     }
-    // free linked list of ip addr
-    freeaddrinfo(servinfo);
-
     if (dummy == NULL) {
         std::cerr << "getaddrinfo error" << std::endl;
         return 1;
     }
+    // free linked list of ip addr
+    freeaddrinfo(servinfo);
     // listen on socket with BACKLOG amount of requests in the queue at any one time
     if (listen(sockfd, BACKLOG) == -1) {
         std::cerr << "listen error" << std::endl;
@@ -100,6 +100,7 @@ int main() {
 
     // while accept loop
     while (1) {
+        std::cout << "Waiting for a new connection..." << std::endl;
         sin_size = sizeof their_addr;
         // accept new connection
         if ((newfd = accept(sockfd,(struct sockaddr *)&their_addr,&sin_size)) == -1) {

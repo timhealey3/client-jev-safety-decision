@@ -11,10 +11,11 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
 #define PORT "3490" // the port client will be connecting to
 #define IP "127.0.0.1"
-#include <arpa/inet.h>
+#define MAXDATASIZE 100 // max number of bytes we can get at once
 
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa)
@@ -28,10 +29,10 @@ void *get_in_addr(struct sockaddr *sa)
 
 int main() {
     // socket file descriptor
-    int sockfd;
-    int rv;
+    int sockfd, numbytes, rv;
     struct addrinfo hints, *servinfo, *dummy;
     char s[INET6_ADDRSTRLEN];
+    char buf[MAXDATASIZE];
     // clear out hints
     memset(&hints, 0, sizeof(hints));
     hints.ai_family=AF_INET;    // ipv4
@@ -44,27 +45,39 @@ int main() {
     // make socket connection by testing each element in servinfo ll
     for (dummy = servinfo; dummy != NULL; dummy = dummy->ai_next) {
         // make socket
-        if (sockfd = (socket(dummy->ai_family, dummy->ai_socktype, dummy->ai_protocol)) == -1) {
+        if ((sockfd = socket(dummy->ai_family,
+                     dummy->ai_socktype,
+                     dummy->ai_protocol)) == -1) {
             std::cerr << "socket error" << std::endl;
             continue;
         }
-        inet_ntop(dummy->ai_family,get_in_addr((struct sockaddr *)dummy->ai_addr),s, sizeof s);
-        printf("client: attempting connection to %s\n", s);
+        inet_ntop(dummy->ai_family,get_in_addr((struct sockaddr *) dummy->ai_addr), s, sizeof s);
+        printf("client: attempting connection to %s", s);
+        std::cout << ":" << PORT << std::endl;
         // connect
         if (connect(sockfd, dummy->ai_addr, dummy->ai_addrlen) == -1) {
-            std::cerr << "connect error" << std::endl;
-            return 1;
+            perror("connect");
+            close(sockfd);
+            continue;
         }
         break;
     }
-    freeaddrinfo(servinfo);
     if (dummy == NULL) {
         std::cerr << "client: failed to connect" << std::endl;
         return 1;
     }
+    inet_ntop(dummy->ai_family, get_in_addr((struct sockaddr *) dummy->ai_addr), s, sizeof s);
+    printf("client: connected to %s\n", s);
+    freeaddrinfo(servinfo);
+    // receive message
+    if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1) {
+    std::cerr << "recv error" << std::endl;
+        return 1;
+    }
+    buf[numbytes] = '\0';
+    printf("client: received '%s'\n", buf);
 
-
-
+    close(sockfd);
     // receive data
     return 0;
 }
