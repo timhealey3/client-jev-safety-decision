@@ -9,11 +9,28 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
-#include <random>
+#include <nlohmann/json.hpp>
+#include <curl/curl.h>
 
 #define PORT "3490"
 #define BACKLOG 10
 #define MAXDATASIZE 100 // max number of bytes we can get at once
+
+size_t write_callback(
+    char* contents,
+    size_t size,
+    size_t nmemb,
+    void* userp
+) {
+    size_t total = size * nmemb;
+
+    std::string* response =
+        static_cast<std::string*>(userp);
+
+    response->append(contents, total);
+
+    return total;
+}
 
 void sigchld_handler(int s)
 {
@@ -26,37 +43,6 @@ void sigchld_handler(int s)
     while(waitpid(-1, NULL, WNOHANG) > 0);
 
     errno = saved_errno;
-}
-
-std::string getEnv() {
-    std::vector<std::string> env = {
-        "It started to lightly rain while driving on the highway halfway to destination",
-        "There are traffic cones and a reduced speed zone",
-        "you are approaching a intersection",
-        "the sun is setting",
-        "normal driving conditions",
-        "the car in front is swerving",
-        "there are first responder sirens",
-        "the car has detected LIDAR is broken",
-        "the car has 5 miles of fuel left"
-    };
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> distrib(0, env.size() - 1);
-    return env[distrib(gen)];
-}
-
-bool sendall(int s, std::string buf, int len) {
-    int total = 0;
-    int bytesleft = len;
-    while (total < len) {
-        bytesleft = len - total;
-        std::cout << "Send " << bytesleft << std::endl;
-        int n = send(s, buf.c_str() + total, bytesleft, 0);
-        if (n == -1) return false;
-        total += bytesleft;
-    }
-    return total == len;
 }
 
 // get sockaddr, IPv4 or IPv6:
@@ -80,6 +66,22 @@ int main() {
     socklen_t sin_size;
     char s[INET6_ADDRSTRLEN];
     char recvBuf[MAXDATASIZE];
+    CURL* curl = curl_easy_init();
+
+    if (!curl) {
+        std::cerr << "Failed to initialize curl\n";
+        return 1;
+    }
+    // Get API key from environment
+    const char* api_key = std::getenv("OPENROUTER_API_KEY");
+
+    if (api_key == nullptr) {
+        std::cerr << "OPENROUTER_API_KEY is not set\n";
+        curl_easy_cleanup(curl);
+        return 1;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://openrouter.ai/api/alpha/decisions");
     // clear out hints data
     memset(&hints, 0, sizeof(hints));
     hints.ai_family=AF_INET;        // use ipv4
@@ -144,22 +146,82 @@ int main() {
         // child process
         if (!fork()) {
             close(sockfd); // child doesnt need the listener
-            // send data to connection
-            std::string buf = getEnv();
-            if (!sendall(newfd, buf, buf.size())) {
-                std::cerr << "send error" << std::endl;
-            }
-            // receive message
-            if ((numbytes = recv(newfd, recvBuf, MAXDATASIZE - 1, 0)) == -1) {
+            // receive data to connection
+            char buf[MAXDATASIZE];
+            if ((numbytes = recv(newfd, buf, MAXDATASIZE - 1, 0)) == -1) {
                 std::cerr << "recv error" << std::endl;
                 return 1;
             }
-            recvBuf[numbytes] = '\0';
-            printf("client: received '%s'\n", recvBuf);
+            buf[numbytes] = '\0';
+            printf("client: received '%s'\n", buf);
+            std::string environment = buf;
+            // JSON body
+            std::string request_body = R"({
+                    "model": "typesafe/jev-1.13",
+                    "state": {
+                        "agent_details": "L4 autonomous driving agent",
+                        "environment": ")" + environment + R"("
+                    },
+                    "questions": {
+                        "decision": {
+                            "type": "score",
+                            "instructions": "What should you do?",
+                            "criteria": [
+                                "pullover",
+                                "require human driver attention",
+                                "require human driver to manually drive",
+                                "continue autonomously driving the vehicle"
+                            ]
+                        }
+                    }
+                })";
+                // CURLOPT_POSTFIELDS implicity makes the request a post
+                curl_easy_setopt(
+                    curl,
+                    CURLOPT_POSTFIELDS,
+                    request_body.c_str()
+                );
+
+                // Headers
+                struct curl_slist* headers = nullptr;
+                std::string auth_header = "Authorization: Bearer " + std::string(api_key);
+                headers = curl_slist_append(headers,auth_header.c_str());
+                headers = curl_slist_append(headers,"Content-Type: application/json");
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+                // Capture response
+                std::string response;
+
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+                // Perform request
+                CURLcode result = curl_easy_perform(curl);
+                nlohmann::json response_json = nlohmann::json::parse(response);
+                std::cout << "JSON response:\n";
+                std::cout << response << '\n';
+                auto& decision = response_json["answers"]["decision"];
+
+                double i = 0;
+                std::string sendRes;
+                for (const auto& [key, probability] :
+                    decision["probabilities"].items()) {
+                    std::string actionStr = decision["legend"][key];
+                    //Action actionEnum = stringToAction(actionStr);
+                    std::cout << actionStr << ": " << probability.get<double>() << '\n';
+                    if (i < probability.get<double>()) {
+                        i = probability.get<double>();
+                        sendRes = actionStr;
+                    }
+                }
+                send(newfd, sendRes.c_str(), sendRes.size(), 0);
+                std::cout << i << '\n';
             close(newfd);
+            curl_slist_free_all(headers);
             exit(0);
         }
         close(newfd); // parent doesnt need this
+        curl_easy_cleanup(curl);
     }
     return 0;
 }
