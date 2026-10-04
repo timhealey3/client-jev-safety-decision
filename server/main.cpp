@@ -14,6 +14,7 @@
 
 #define PORT "3490"
 #define BACKLOG 10
+#define MAXDATASIZE 100 // max number of bytes we can get at once
 
 void sigchld_handler(int s)
 {
@@ -26,6 +27,19 @@ void sigchld_handler(int s)
     while(waitpid(-1, NULL, WNOHANG) > 0);
 
     errno = saved_errno;
+}
+
+bool sendall(int s, char *buf, int len) {
+    int total = 0;
+    int bytesleft = len;
+    while (total < len) {
+        bytesleft = len - total;
+        std::cout << "Send " << bytesleft << std::endl;
+        int n = send(s, buf + total, bytesleft, 0);
+        if (n == -1) return false;
+        total += bytesleft;
+    }
+    return total == len;
 }
 
 // get sockaddr, IPv4 or IPv6:
@@ -41,7 +55,7 @@ void *get_in_addr(struct sockaddr *sa)
 int main() {
     std::cout << "Starting up the server" << std::endl;
     // socked file descriptor
-    int sockfd, newfd;
+    int sockfd, newfd, numbytes;
     struct addrinfo hints, *servinfo, *dummy;
     struct sockaddr_storage their_addr;
     int yes = 1;
@@ -113,9 +127,19 @@ int main() {
         if (!fork()) {
             close(sockfd); // child doesnt need the listener
             // send data to connection
-            if (send(newfd, "Hello, World!", 13, 0) == -1) {
+            char *buf = "Hello, World";
+            int len = strlen(buf);
+            if (!sendall(newfd, buf, len)) {
                 std::cerr << "send error" << std::endl;
             }
+            // receive message
+            char buf2[MAXDATASIZE];
+            if ((numbytes = recv(newfd, buf2, MAXDATASIZE - 1, 0)) == -1) {
+                std::cerr << "recv error" << std::endl;
+                return 1;
+            }
+            buf2[numbytes] = '\0';
+            printf("client: received '%s'\n", buf2);
             close(newfd);
             exit(0);
         }
