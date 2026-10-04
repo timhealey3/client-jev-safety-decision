@@ -2,13 +2,10 @@
 // Created by Tim Healey on 10/2/26.
 //
 #include <iostream>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <errno.h>
 #include <string.h>
 #include <netdb.h>
-#include <sys/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -44,22 +41,6 @@ void *get_in_addr(struct sockaddr *sa)
     }
 
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
-
-enum class Action {
-    pullover,
-    autonomous,
-    attention,
-    takeover,
-    unkown
-};
-
-Action stringToAction(std::string s) {
-    if (s == "pullover") return Action::pullover;
-    if (s == "continue autonomously driving the vehicle") return Action::autonomous;
-    if (s == "require human driver attention") return Action::attention;
-    if (s == "require human driver to manually drive") return Action::takeover;
-    return Action::unkown;
 }
 
 int main() {
@@ -127,18 +108,18 @@ int main() {
     }
     buf[numbytes] = '\0';
     printf("client: received '%s'\n", buf);
-
+    std::string environment = buf;
     // JSON body
     std::string request_body = R"({
         "model": "typesafe/jev-1.13",
         "state": {
             "agent_details": "L4 autonomous driving agent",
-            "environment": "It started to lightly rain while driving on the highway halfway to destination"
+            "environment": ")" + environment + R"("
         },
         "questions": {
             "decision": {
                 "type": "score",
-                "instructions": "What should you do",
+                "instructions": "What should you do?",
                 "criteria": [
                     "pullover",
                     "require human driver attention",

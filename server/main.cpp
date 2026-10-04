@@ -1,16 +1,15 @@
 #include <iostream>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <random>
 
 #define PORT "3490"
 #define BACKLOG 10
@@ -29,13 +28,31 @@ void sigchld_handler(int s)
     errno = saved_errno;
 }
 
-bool sendall(int s, char *buf, int len) {
+std::string getEnv() {
+    std::vector<std::string> env = {
+        "It started to lightly rain while driving on the highway halfway to destination",
+        "There are traffic cones and a reduced speed zone",
+        "you are approaching a intersection",
+        "the sun is setting",
+        "normal driving conditions",
+        "the car in front is swerving",
+        "there are first responder sirens",
+        "the car has detected LIDAR is broken",
+        "the car has 5 miles of fuel left"
+    };
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<int> distrib(0, env.size() - 1);
+    return env[distrib(gen)];
+}
+
+bool sendall(int s, std::string buf, int len) {
     int total = 0;
     int bytesleft = len;
     while (total < len) {
         bytesleft = len - total;
         std::cout << "Send " << bytesleft << std::endl;
-        int n = send(s, buf + total, bytesleft, 0);
+        int n = send(s, buf.c_str() + total, bytesleft, 0);
         if (n == -1) return false;
         total += bytesleft;
     }
@@ -62,6 +79,7 @@ int main() {
     struct sigaction sa;
     socklen_t sin_size;
     char s[INET6_ADDRSTRLEN];
+    char recvBuf[MAXDATASIZE];
     // clear out hints data
     memset(&hints, 0, sizeof(hints));
     hints.ai_family=AF_INET;        // use ipv4
@@ -127,19 +145,17 @@ int main() {
         if (!fork()) {
             close(sockfd); // child doesnt need the listener
             // send data to connection
-            char *buf = "Hello, World";
-            int len = strlen(buf);
-            if (!sendall(newfd, buf, len)) {
+            std::string buf = getEnv();
+            if (!sendall(newfd, buf, buf.size())) {
                 std::cerr << "send error" << std::endl;
             }
             // receive message
-            char buf2[MAXDATASIZE];
-            if ((numbytes = recv(newfd, buf2, MAXDATASIZE - 1, 0)) == -1) {
+            if ((numbytes = recv(newfd, recvBuf, MAXDATASIZE - 1, 0)) == -1) {
                 std::cerr << "recv error" << std::endl;
                 return 1;
             }
-            buf2[numbytes] = '\0';
-            printf("client: received '%s'\n", buf2);
+            recvBuf[numbytes] = '\0';
+            printf("client: received '%s'\n", recvBuf);
             close(newfd);
             exit(0);
         }
